@@ -108,11 +108,11 @@ impl Config {
                 .unwrap_or_else(|_| DEFAULT_ZEN_MODELS_USER_AGENT.into()),
             zen_api_key: std::env::var("FREE_MODEL_ZEN_API_KEY")
                 .or_else(|_| std::env::var("FREE_MODEL_NEWAPI_KEY"))
-                .unwrap_or_else(|_| "public".into()),
+                .unwrap_or_else(|_| "sk-dev".into()),
             require_api_key: std::env::var("FREE_MODEL_REQUIRE_API_KEY")
                 .map(|v| v != "0")
                 .unwrap_or(true),
-            api_key: std::env::var("FREE_MODEL_API_KEY").unwrap_or_else(|_| "changeme".into()),
+            api_key: std::env::var("FREE_MODEL_API_KEY").unwrap_or_else(|_| "sk-dev".into()),
             timeout: Duration::from_millis(
                 std::env::var("FREE_MODEL_TIMEOUT_MS")
                     .unwrap_or_else(|_| "120000".into())

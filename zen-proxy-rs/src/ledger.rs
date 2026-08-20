@@ -397,10 +397,10 @@ mod tests {
 
     #[test]
     fn redact_node_url_masks_password() {
-        let url = "socks5h://user:pass123@proxy.example.com:80";
+        let url = "socks5h://user:pass123@p.webshare.io:80";
         let redacted = LedgerEvent::redact_node_url(url);
         assert!(!redacted.contains("pass123"));
-        assert!(redacted.contains("proxy.example.com"));
+        assert!(redacted.contains("p.webshare.io"));
         assert!(redacted.contains("***"));
     }
 
@@ -452,12 +452,12 @@ mod tests {
 
     #[test]
     fn sanitize_text_redacts_key_proxy_and_paths() {
-        let input = "key sk-dev proxy socks5h://user:pass@host:1080 path /home/user/app C:\\Users\\Example\\secret";
+        let input = "key sk-dev proxy socks5h://user:pass@host:1080 path /home/lenovo/app C:\\Users\\Lenovo\\secret";
         let out = sanitize_text(input);
         assert!(!out.contains("sk-dev"));
         assert!(!out.contains("user:pass"));
-        assert!(!out.contains("/home/user"));
-        assert!(!out.contains("C:\\Users\\Example"));
+        assert!(!out.contains("/home/lenovo"));
+        assert!(!out.contains("C:\\Users\\Lenovo"));
         assert!(out.contains("[redacted-secret]"));
         assert!(out.contains("***@host:1080"));
     }
@@ -467,14 +467,14 @@ mod tests {
         let mut tele = crate::collector::telemetry::new_telemetry();
         tele.client_id = "sk-dev".into();
         tele.node_url = "socks5h://user:pass@host:1080".into();
-        tele.failure_message = "failed at /home/user/app with sk-secret".into();
+        tele.failure_message = "failed at /home/lenovo/app with sk-secret".into();
 
         let out = sanitize_request_telemetry(&tele);
 
         assert_ne!(out.client_id, "sk-dev");
         assert!(out.client_id.starts_with("hash:"));
         assert_eq!(out.node_url, "socks5h://***@host:1080");
-        assert!(!out.failure_message.contains("/home/user"));
+        assert!(!out.failure_message.contains("/home/lenovo"));
         assert!(!out.failure_message.contains("sk-secret"));
     }
 

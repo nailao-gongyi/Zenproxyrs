@@ -1,9 +1,16 @@
 /target
+**/target/
 **/.env
+**/.env.*
 nodes.json
+**/nodes.json
 *.rlib
 *.log
 /tmp/
+**/__pycache__/
+*.pyc
 .DS_Store
 .idea/
 .vscode/
+.codex_tmp/
+test-records/runs/
