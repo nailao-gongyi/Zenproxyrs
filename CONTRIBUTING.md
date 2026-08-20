@@ -22,6 +22,7 @@ cargo test
 ## 署名与 Contributors 政策
 
 - **禁止**在 commit message、PR 描述、`Co-authored-by` trailer、README、`CONTRIBUTORS` 或任何对外文档中，将 **Cursor**、其他 AI agent 或自动化工具列为作者、贡献者或 contributor。
+- Cursor IDE 可能在提交时自动注入 `Co-authored-by: Cursor <cursoragent@cursor.com>`；**推送前必须检查并删除**（可用 `git log -1 --format=%B` 核对）。
 - 仅当仓库维护者（`croppedtravelleralex`）**明确书面许可**时，方可例外。
 - 官方 contributor 名单以仓库根目录 [`CONTRIBUTORS`](./CONTRIBUTORS) 为准，而非 GitHub 自动统计页。
 
