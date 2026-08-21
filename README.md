@@ -223,11 +223,27 @@ Docker 回滚：`docker compose down` 后切回上一镜像 tag 或 `docker comp
 
 ### 模型列表行为
 
+OpenCode 上游（2026-08-21）当前 **9 个 free 模型**；Zenproxy 默认应暴露 **9 个 public alias**：
+
+| Public ID | 上游 ID | 来源 |
+|-----------|---------|------|
+| `deepseek-v4-flash` | `deepseek-v4-flash-free` | 静态 |
+| `big-pickle` | `big-pickle` | 静态 |
+| `mimo-v2.5` | `mimo-v2.5-free` | 静态 |
+| `hy3` | `hy3-free` | 静态 |
+| `x-preview-f` | `x-preview-f-free` | 动态发现 |
+| `muse-spark-1.2-contributor` | `muse-spark-1.2-contributor-free` | 动态发现 |
+| `nemotron-3-ultra` | `nemotron-3-ultra-free` | 动态发现 |
+| `nemotron-3.5-lightning` | `nemotron-3.5-lightning-free` | 动态发现 |
+| `laguna-s-2.1` | `laguna-s-2.1-free` | 动态发现 |
+
 默认配置下，服务启动后会：
 
-1. 始终列出 4 个静态模型：`deepseek-v4-flash`、`big-pickle`、`mimo-v2.5`、`hy3`
-2. 每 30 分钟（可配 `DYNAMIC_MODEL_DISCOVERY_INTERVAL_SECS`）拉取上游 free 模型（ID 以 `-free` 结尾或 `big-pickle`）
-3. 将通过分类的 candidate/canary/active 模型追加到 `GET /v1/models`
+1. 始终列出 4 个静态模型
+2. 启动时立即 + 每 30 分钟拉取上游 `/v1/models`（`DYNAMIC_MODEL_DISCOVERY_INTERVAL_SECS`，默认 1800）
+3. 将通过分类的 candidate/canary/active 动态模型追加到 `GET /v1/models`
+
+若只看到 4 个，通常是 `.env` 仍设置了 `DYNAMIC_MODEL_DISCOVERY_ENABLED=false` 或 `DYNAMIC_MODEL_PUBLIC_MODE=static_only`（会覆盖代码默认值）。用 `ops/local-dev/audit_opencode_free_models.py` 可核对上游列表。
 
 若只想保留静态 4 模型，设置 `DYNAMIC_MODEL_PUBLIC_MODE=static_only` 或 `DYNAMIC_MODEL_DISCOVERY_ENABLED=false`。
 
