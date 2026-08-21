@@ -15,6 +15,7 @@
 - Prometheus `/metrics`、管理后台 `/admin/*`
 - Redis 全局预算与会话亲和（可选）
 - **流式截断防护**（v0.3.0）：DSML 标记 withhold/repair、短句假 `end_turn` 的 unfinished tool-intent 检测与重试
+- **默认暴露全部上游 free 模型**：`free_model_kernel` + 动态发现 + `candidate_canary_or_active`（上游 `*-free` 模型自动进入 `/v1/models`）
 
 ## 快速开始
 
@@ -211,12 +212,26 @@ Docker 回滚：`docker compose down` 后切回上一镜像 tag 或 `docker comp
 | `UPSTREAM_API_KEY` | `public` | 上游 API Key |
 | `PROXY_API_KEY` | _(空)_ | 客户端鉴权 Key，留空则不校验 |
 | `ADMIN_API_KEY` | _(空)_ | 管理接口鉴权 Key |
-| `ZEN_PROVIDER_MODE` | `legacy` | `legacy` 或 `free_model_kernel` |
+| `ZEN_PROVIDER_MODE` | `free_model_kernel` | `legacy` 或 `free_model_kernel`（默认已启用 V4 内核） |
+| `DYNAMIC_MODEL_DISCOVERY_ENABLED` | `true` | 定期拉取上游 `/v1/models` |
+| `DYNAMIC_MODEL_PUBLIC_MODE` | `candidate_canary_or_active` | 动态 free 模型公开策略；`static_only` 仅 4 个静态模型 |
 | `NODES_FILE` | `/etc/zen-proxy/nodes.json` | 代理节点列表文件 |
 | `PREFERRED_PROXY_URLS` | _(空)_ | 优先代理 URL，逗号分隔 |
 | `GLOBAL_BUDGET_REDIS_URL` | _(空)_ | Redis 地址（全局预算） |
 
 完整列表见 [.env.example](./.env.example)。
+
+### 模型列表行为
+
+默认配置下，服务启动后会：
+
+1. 始终列出 4 个静态模型：`deepseek-v4-flash`、`big-pickle`、`mimo-v2.5`、`hy3`
+2. 每 30 分钟（可配 `DYNAMIC_MODEL_DISCOVERY_INTERVAL_SECS`）拉取上游 free 模型（ID 以 `-free` 结尾或 `big-pickle`）
+3. 将通过分类的 candidate/canary/active 模型追加到 `GET /v1/models`
+
+若只想保留静态 4 模型，设置 `DYNAMIC_MODEL_PUBLIC_MODE=static_only` 或 `DYNAMIC_MODEL_DISCOVERY_ENABLED=false`。
+
+生产环境若需 probe 晋升门槛，可改为 `canary_or_active` 或 `active_only`（见 admin `/admin/models`）。
 
 ## 代理节点配置
 
