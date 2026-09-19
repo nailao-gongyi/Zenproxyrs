@@ -664,6 +664,30 @@ fn redact_credentials_for_scheme(input: &str, scheme: &str) -> String {
 pub type WzenResponse = reqwest::Response;
 pub type WzenError = reqwest::Error;
 
+/// 活性探针: 用与真实客户端完全一致的签名调一次 mini prompt,
+/// 返回上游 HTTP 状态码(200=可用)。供网关的 allowlist 活性检查使用。
+pub async fn probe_model(zen_url: &str, api_key: &str, model: &str) -> u16 {
+    let body = serde_json::json!({
+        "model": model,
+        "max_tokens": 16,
+        "stream": true,
+        "messages": [
+            {"role": "system", "content": "You are opencode."},
+            {"role": "user", "content": "reply OK"}
+        ],
+    });
+    let mut req = zen_http()
+        .post(format!("{}/chat/completions", zen_url.trim_end_matches('/')))
+        .header("content-type", "application/json");
+    for (k, v) in zen_headers(api_key, &body) {
+        req = req.header(k, v);
+    }
+    match req.body(serde_json::to_vec(&body).unwrap_or_default()).send().await {
+        Ok(resp) => resp.status().as_u16(),
+        Err(_) => 0, // 传输层错误按不可用计
+    }
+}
+
 pub async fn collect_stream_text(
     resp: WzenResponse,
 ) -> Result<(String, String, Option<ZenUsage>), crate::error::AppError> {

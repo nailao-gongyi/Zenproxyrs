@@ -21,4 +21,5 @@ pub struct AppState {
     pub dead_pool: Arc<dyn DeadPool>,
     pub ratelimited_pool: Arc<dyn RateLimitedPool>,
     pub active_pool: Arc<dyn Pool>,
+    pub live_probe: crate::live_probe::Verdicts,
 }

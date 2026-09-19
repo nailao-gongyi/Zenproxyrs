@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 #![recursion_limit = "256"]
 
+mod live_probe;
+use std::collections::HashMap;
 mod admin;
 mod collector;
 mod config;
@@ -112,6 +114,7 @@ async fn metrics_handler(State(st): State<Arc<AppState>>) -> String {
 }
 
 async fn models_handler(State(st): State<Arc<AppState>>) -> Json<Value> {
+    let dead = live_probe::dead_set(&st.live_probe).await;
     let cfg = st.config.read().unwrap();
     let data = if cfg.v4_model_registry_active() {
         let registry = v4::model::EffectiveModelRegistry::with_dynamic_allowlists(
@@ -123,6 +126,7 @@ async fn models_handler(State(st): State<Arc<AppState>>) -> Json<Value> {
         registry
             .public_models()
             .into_iter()
+            .filter(|model| !dead.contains(&model.id))
             .map(|model| json!({"id": model.id, "object": "model", "owned_by": "deepseek"}))
             .collect::<Vec<_>>()
     } else {
@@ -457,6 +461,7 @@ async fn async_main() {
         dead_pool: dead.clone() as Arc<dyn DeadPool>,
         ratelimited_pool: ratelimited.clone() as Arc<dyn RateLimitedPool>,
         active_pool: active.clone() as Arc<dyn Pool>,
+        live_probe: Arc::new(tokio::sync::RwLock::new(HashMap::<String, live_probe::Verdict>::new())),
         collector,
         upstream_health,
         lanes,
@@ -563,6 +568,8 @@ async fn async_main() {
         .request_body_limit_mb
         .max(1)
         .saturating_mul(1024 * 1024);
+    live_probe::spawn(app_state.clone());
+
     let app = Router::new()
         .merge(admin::admin_router())
         .route("/", get(index_handler))

@@ -368,6 +368,8 @@ pub struct Config {
     pub dynamic_model_public_allowlist: Vec<String>,
     pub dynamic_model_claudecode_compat_allowlist: Vec<String>,
     pub dynamic_model_allow_direct_fallback: bool,
+    pub live_probe_interval_secs: Option<u64>,
+    pub live_probe_fail_threshold: u32,
     pub dynamic_model_probe_enabled: bool,
     pub dynamic_model_probe_adapter_mode: DynamicModelProbeAdapterMode,
     pub dynamic_model_probe_max_concurrent: usize,
@@ -554,6 +556,11 @@ impl Config {
                 "DYNAMIC_MODEL_ALLOW_DIRECT_FALLBACK",
                 false,
             ),
+            live_probe_interval_secs: match env::var("LIVE_PROBE_INTERVAL_SECS") {
+                Ok(v) if !v.is_empty() && v != "0" => v.parse::<u64>().ok(),
+                _ => None,
+            },
+            live_probe_fail_threshold: load_env_var("LIVE_PROBE_FAIL_THRESHOLD", 2u32),
             dynamic_model_probe_enabled: load_env_var("DYNAMIC_MODEL_PROBE_ENABLED", false),
             dynamic_model_probe_adapter_mode: load_env_var(
                 "DYNAMIC_MODEL_PROBE_ADAPTER",
