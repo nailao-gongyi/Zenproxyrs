@@ -539,7 +539,7 @@ fn ensure_agent_tools(body: &mut serde_json::Value) {
         serde_json::from_str::<serde_json::Value>(EMBEDDED_TOOLS),
     ) {
         match obj.get_mut("tools") {
-            Some(Value::Array(arr)) => {
+            Some(serde_json::Value::Array(arr)) => {
                 if let Some(extra) = injected.as_array() {
                     arr.extend(extra.iter().cloned());
                 }
