@@ -933,7 +933,7 @@ async fn handle_non_stream(
 }
 
 async fn collect_anthropic_non_stream_parts_with_guard(
-    resp: reqwest::Response,
+    resp: crate::zen::client::WzenResponse,
     body: &ChatRequest,
     profile: ClientProfile,
     no_forwardable_retry_after: std::time::Duration,

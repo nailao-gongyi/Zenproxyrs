@@ -722,6 +722,31 @@ impl Config {
         m.insert("big-pickle".to_string(), "big-pickle".to_string());
         m.insert("mimo-v2.5".to_string(), "mimo-v2.5-free".to_string());
         m.insert("hy3".to_string(), "hy3-free".to_string());
+        // 2026-09 上游免费模型扩容: 注册表公开名 -> 上游 -free 名
+        m.insert(
+            "nemotron-3-ultra".to_string(),
+            "nemotron-3-ultra-free".to_string(),
+        );
+        m.insert(
+            "nemotron-3.5-lightning".to_string(),
+            "nemotron-3.5-lightning-free".to_string(),
+        );
+        m.insert(
+            "ling-3.0-flash-fin".to_string(),
+            "ling-3.0-flash-fin-free".to_string(),
+        );
+        // 支持环境变量追加/覆盖: MODEL_MAPPING="pub:upstream,pub2:upstream2"
+        if let Ok(raw) = std::env::var("MODEL_MAPPING") {
+            for pair in raw.split(',') {
+                let pair = pair.trim();
+                if let Some((pub_name, up_name)) = pair.split_once(':') {
+                    let (pub_name, up_name) = (pub_name.trim(), up_name.trim());
+                    if !pub_name.is_empty() && !up_name.is_empty() {
+                        m.insert(pub_name.to_string(), up_name.to_string());
+                    }
+                }
+            }
+        }
         m
     }
 

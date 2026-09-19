@@ -44,6 +44,9 @@ impl ModelCompatibilityProfile {
             "mimo" => Some(Self::StaticMimo),
             "mimo-v2.5" => Some(Self::StaticMimo),
             "hy3" => Some(Self::StaticGeneric),
+            "nemotron-3-ultra" => Some(Self::StaticGeneric),
+            "nemotron-3.5-lightning" => Some(Self::StaticGeneric),
+            "ling-3.0-flash-fin" => Some(Self::StaticGeneric),
             "claude-haiku-4-5" => Some(Self::StaticFlash),
             _ => None,
         }
@@ -86,6 +89,10 @@ impl StaticModelRegistry {
         ("big-pickle", "big-pickle"),
         ("mimo-v2.5", "mimo-v2.5-free"),
         ("hy3", "hy3-free"),
+        // 2026-09 上游免费模型扩容
+        ("nemotron-3-ultra", "nemotron-3-ultra-free"),
+        ("nemotron-3.5-lightning", "nemotron-3.5-lightning-free"),
+        ("ling-3.0-flash-fin", "ling-3.0-flash-fin-free"),
     ];
     const REQUEST_ALIASES: &'static [(&'static str, &'static str, &'static str)] = &[
         ("deepseek", "deepseek", "deepseek-v4-flash-free"),

@@ -33,11 +33,12 @@ pub fn build_opencode_headers(
         return None;
     }
 
-    let request = uuid::Uuid::new_v4().to_string();
+    let request = opencode_identifier("msg");
     let user_agent = format!("opencode/{}", config.opencode_user_agent_version);
     let client = config.opencode_client_name.clone();
-    let project = short_hash(&format!("project:{}", config.opencode_project_seed));
-    let session = build_session_id(incoming_headers, config, client_id, model);
+    // 真实 opencode 客户端在普通目录下 project=global；会话/请求 ID 必须为官方形制。
+    let project = "global".to_string();
+    let session = opencode_identifier("ses");
 
     Some(OpencodeHeaderSet {
         hashes: OpencodeHeaderHashes {
@@ -87,6 +88,33 @@ fn build_session_id(
 pub fn short_hash(input: &str) -> String {
     let hash = Sha256::digest(input.as_bytes());
     hex::encode(&hash[..8])
+}
+
+/// opencode 官方 ID 算法（schema/src/identifier.ts）：
+/// `prefix_` + 12位hex(毫秒<<12|counter) + 14位base62随机。
+/// FreeTier 校验检查 ID 形制；此前的 sha 短哈希会被识别为非客户端流量。
+pub fn opencode_identifier(prefix: &str) -> String {
+    const CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let ts_ms = now.as_secs() as u64 * 1000 + (now.subsec_nanos() / 1_000_000) as u64;
+    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let counter = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let current = ts_ms.wrapping_shl(12) | (counter & 0xfff);
+    let mut time_hex = String::with_capacity(12);
+    for i in 0..6 {
+        time_hex.push_str(&format!("{:02x}", (current >> (40 - 8 * i)) & 0xff));
+    }
+    let mut seed = now.subsec_nanos() as u64 ^ (ts_ms.wrapping_mul(0x9E3779B97F4A7C15));
+    let mut rand = String::with_capacity(14);
+    for _ in 0..14 {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        rand.push(CHARS[((seed >> 33) % 62) as usize] as char);
+    }
+    format!("{prefix}_{time_hex}{rand}")
 }
 
 #[cfg(test)]

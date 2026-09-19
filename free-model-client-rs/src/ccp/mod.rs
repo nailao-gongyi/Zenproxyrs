@@ -73,7 +73,22 @@ pub fn compute_icp_identity(request: &ChatRequest, ctx: &UskContext<'_>) -> IcpI
         normalize_bucket(ctx.source_client),
         short_hash16(&usk)
     );
-    let zen_session_id = format!("ses_{}", short_hash16(&usk));
+    // FreeTier 校验检查 ID 形制（prefix_ + 12hex + 14base62）。
+    // 以 usk 确定性派生：形制合法且跨实例稳定，保留 CCP 会话固定语义。
+    let usk_seed = short_hash16(&usk);
+    let (seed_hex_raw, seed_b62_raw) = usk_seed.split_at(12.min(usk_seed.len()));
+    let seed_hex = format!("{:0<12}", seed_hex_raw);
+    const OC_CHARS: &[u8] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    let mut oc_seed = crate::zen::client::stable_hash64(usk.as_bytes());
+    let mut seed_b62 = String::with_capacity(14);
+    for _ in 0..14 {
+        oc_seed = oc_seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        seed_b62.push(OC_CHARS[((oc_seed >> 33) % 62) as usize] as char);
+    }
+    let _ = seed_b62_raw;
+    let zen_session_id = format!("ses_{seed_hex}{seed_b62}");
     let tools_epoch_id = short_hash16(&format!(
         "{}:{}",
         request.model,
