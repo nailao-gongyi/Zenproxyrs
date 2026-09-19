@@ -532,9 +532,21 @@ fn ensure_agent_tools(body: &mut serde_json::Value) {
     if existing >= MIN_TOOLS {
         return;
     }
-    if let Ok(tools) = serde_json::from_str::<serde_json::Value>(EMBEDDED_TOOLS) {
-        if let Some(obj) = body.as_object_mut() {
-            obj.insert("tools".to_string(), tools);
+    // 合并而非覆盖: 保留调用方声明的工具(客户端 tool_calls 语义依赖它们),
+    // 追加内置 opencode 工具凑足 FreeTier 校验的 >=7 个。
+    if let (Some(obj), Ok(injected)) = (
+        body.as_object_mut(),
+        serde_json::from_str::<serde_json::Value>(EMBEDDED_TOOLS),
+    ) {
+        match obj.get_mut("tools") {
+            Some(Value::Array(arr)) => {
+                if let Some(extra) = injected.as_array() {
+                    arr.extend(extra.iter().cloned());
+                }
+            }
+            _ => {
+                obj.insert("tools".to_string(), injected);
+            }
         }
     }
 }
