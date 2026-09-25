@@ -228,6 +228,15 @@ impl DynamicModelRegistry {
     pub fn update_from_opencode_json(&self, body: &str) -> Result<ModelDiscoverySnapshot, String> {
         let response: OpenCodeModelsResponse =
             serde_json::from_str(body).map_err(|err| format!("invalid models json: {err}"))?;
+        if response.data.is_empty() {
+            let has_existing_models = !self.inner.read().unwrap().models.is_empty();
+            if has_existing_models {
+                return Err("discovery response contains no models".to_string());
+            }
+        }
+        if response.data.iter().any(|model| model.id.trim().is_empty()) {
+            return Err("discovery response contains an empty model id".to_string());
+        }
         let now = now_unix();
         let mut seen_this_round = std::collections::BTreeSet::new();
 
@@ -396,6 +405,34 @@ impl DynamicModelRegistry {
         models
     }
 
+    pub fn probe_published_models(&self, max_per_round: usize) -> Vec<DiscoveredModel> {
+        if max_per_round == 0 {
+            return Vec::new();
+        }
+        let mut models = self
+            .inner
+            .read()
+            .unwrap()
+            .models
+            .iter()
+            .filter(|model| {
+                matches!(
+                    model.state,
+                    DiscoveredModelState::Canary | DiscoveredModelState::Active
+                )
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        models.sort_by(|a, b| {
+            a.last_probe_unix
+                .unwrap_or_default()
+                .cmp(&b.last_probe_unix.unwrap_or_default())
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        models.truncate(max_per_round);
+        models
+    }
+
     pub fn set_model_state(
         &self,
         model_id: &str,
@@ -470,17 +507,21 @@ impl DynamicModelRegistry {
             .position(|model| model.id == model_id)?;
         {
             let model = &mut snapshot.models[index];
-            model.state = DiscoveredModelState::ProbePending;
-            model.reason = "model probe started; awaiting probe result".to_string();
+            if matches!(model.state, DiscoveredModelState::Candidate) {
+                model.state = DiscoveredModelState::ProbePending;
+                model.reason = "model probe started; awaiting probe result".to_string();
+                model.probe_required = true;
+                model.auto_promoted = false;
+                model.public = false;
+                model.routable = false;
+                clear_claudecode_compatibility(model);
+            } else {
+                model.reason = "published model re-probe started; current route remains active".to_string();
+            }
             model.last_probe_unix = Some(now);
             model.last_probe_name = None;
             model.last_seen_unix = now;
             model.probe_attempts_total = model.probe_attempts_total.saturating_add(1);
-            model.probe_required = true;
-            model.auto_promoted = false;
-            model.public = false;
-            model.routable = false;
-            clear_claudecode_compatibility(model);
         }
         recompute_counts(&mut snapshot);
         Some(snapshot.models[index].clone())
@@ -500,7 +541,15 @@ impl DynamicModelRegistry {
             .position(|model| model.id == model_id)?;
         {
             let model = &mut snapshot.models[index];
-            model.reason = format!("probe passed: {probe_name}; promotion quorum still required");
+            let was_published = matches!(
+                model.state,
+                DiscoveredModelState::Canary | DiscoveredModelState::Active
+            );
+            model.reason = if was_published {
+                format!("published model probe passed: {probe_name}")
+            } else {
+                format!("probe passed: {probe_name}; promotion quorum still required")
+            };
             model.last_probe_unix = Some(now);
             model.last_probe_name = Some(probe_name.clone());
             model.last_success_unix = Some(now);
@@ -518,11 +567,18 @@ impl DynamicModelRegistry {
                 model.passed_probe_names.push(probe_name);
                 model.passed_probe_names.sort();
             }
-            model.probe_required = true;
-            model.auto_promoted = false;
-            model.public = false;
-            model.routable = false;
-            clear_claudecode_compatibility(model);
+            if was_published {
+                model.probe_required = false;
+                model.auto_promoted = true;
+                model.public = true;
+                model.routable = true;
+            } else {
+                model.probe_required = true;
+                model.auto_promoted = false;
+                model.public = false;
+                model.routable = false;
+                clear_claudecode_compatibility(model);
+            }
         }
         recompute_counts(&mut snapshot);
         Some(snapshot.models[index].clone())
@@ -555,11 +611,15 @@ impl DynamicModelRegistry {
             model.probe_failure_total = model.probe_failure_total.saturating_add(1);
             model.consecutive_probe_failures = model.consecutive_probe_failures.saturating_add(1);
             model.consecutive_probe_successes = 0;
-            model.probe_required = true;
-            model.auto_promoted = false;
-            model.public = false;
-            model.routable = false;
-            clear_claudecode_compatibility(model);
+            if matches!(model.state, DiscoveredModelState::Canary | DiscoveredModelState::Active) {
+                model.reason = format!("published model probe failed: {code}");
+            } else {
+                model.probe_required = true;
+                model.auto_promoted = false;
+                model.public = false;
+                model.routable = false;
+                clear_claudecode_compatibility(model);
+            }
         }
         recompute_counts(&mut snapshot);
         Some(snapshot.models[index].clone())
@@ -1062,27 +1122,52 @@ mod tests {
     }
 
     #[test]
-    fn discovery_counts_consecutive_missing_rounds() {
+    fn discovery_rejects_empty_snapshot_without_hiding_existing_models() {
+        let registry = DynamicModelRegistry::new(true, "url".into());
+        let initial = registry
+            .update_from_opencode_json(r#"{"data":[{"id":"mimo-v2.5-free"}]}"#)
+            .unwrap();
+
+        assert_eq!(
+            registry
+                .update_from_opencode_json(r#"{"data":[]}"#)
+                .unwrap_err(),
+            "discovery response contains no models"
+        );
+        let after_empty = registry.snapshot();
+        assert_eq!(after_empty.models, initial.models);
+    }
+
+    #[test]
+    fn discovery_marks_absent_models_missing_when_snapshot_is_nonempty() {
         let registry = DynamicModelRegistry::new(true, "url".into());
         registry
-            .update_from_opencode_json(r#"{"data":[{"id":"mimo-v2.5-free"}]}"#)
+            .update_from_opencode_json(
+                r#"{"data":[{"id":"mimo-v2.5-free"},{"id":"not-free-model"}]}"#,
+            )
             .unwrap();
-        let missing_once = registry
-            .update_from_opencode_json(r#"{"data":[]}"#)
+        let second = registry
+            .update_from_opencode_json(r#"{"data":[{"id":"north-mini-code-free"}]}"#)
             .unwrap();
-        assert_eq!(missing_once.models[0].missing_rounds, 1);
 
-        let missing_twice = registry
-            .update_from_opencode_json(r#"{"data":[]}"#)
-            .unwrap();
-        assert_eq!(missing_twice.models[0].missing_rounds, 2);
+        assert_eq!(second.candidate_total, 1);
+        assert_eq!(second.missing_total, 2);
+        assert!(second
+            .models
+            .iter()
+            .filter(|model| matches!(model.state, DiscoveredModelState::Missing))
+            .all(|model| model.probe_required && !model.auto_promoted));
+    }
 
-        let recovered = registry
-            .update_from_opencode_json(r#"{"data":[{"id":"mimo-v2.5-free"}]}"#)
-            .unwrap();
-        assert_eq!(recovered.models[0].missing_rounds, 0);
-        assert_eq!(recovered.models[0].state, DiscoveredModelState::Candidate);
-        assert!(recovered.models[0].probe_required);
+    #[test]
+    fn discovery_rejects_empty_model_ids() {
+        let registry = DynamicModelRegistry::new(true, "url".into());
+        assert_eq!(
+            registry
+                .update_from_opencode_json(r#"{"data":[{"id":" "}]}"#)
+                .unwrap_err(),
+            "discovery response contains an empty model id"
+        );
     }
 
     #[test]
@@ -1223,6 +1308,39 @@ mod tests {
     }
 
     #[test]
+    fn published_models_are_selected_for_availability_rechecks() {
+        let registry = DynamicModelRegistry::new(true, "url".into());
+        registry
+            .update_from_opencode_json(
+                r#"{"data":[{"id":"candidate-free"},{"id":"canary-free"},{"id":"active-free"},{"id":"quarantined-free"}]}"#,
+            )
+            .unwrap();
+        registry.set_model_state(
+            "canary-free",
+            DiscoveredModelState::Canary,
+            "probe quorum met",
+        );
+        registry.set_model_state(
+            "active-free",
+            DiscoveredModelState::Active,
+            "traffic quorum met",
+        );
+        registry.set_model_state(
+            "quarantined-free",
+            DiscoveredModelState::Quarantined,
+            "failed probe",
+        );
+
+        let ids = registry
+            .probe_published_models(2)
+            .into_iter()
+            .map(|model| model.id)
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["active-free", "canary-free"]);
+        assert!(registry.probe_published_models(0).is_empty());
+    }
+
+    #[test]
     fn probe_candidates_prioritize_never_probed_models() {
         let registry = DynamicModelRegistry::new(true, "url".into());
         registry
@@ -1290,6 +1408,7 @@ mod tests {
         assert_eq!(failure.probe_failure_total, 1);
         assert_eq!(failure.consecutive_probe_successes, 0);
         assert_eq!(failure.consecutive_probe_failures, 1);
+        assert_eq!(failure.state, DiscoveredModelState::ProbePending);
         assert_eq!(
             failure.last_failure_code.as_deref(),
             Some("provider_empty_output")

@@ -19,6 +19,8 @@ export BIND_ADDRESS="${BIND_ADDRESS}"
 export PROXY_TOKEN_MODE=unlimited
 export ADMIN_API_KEY="${ADMIN_API_KEY}"
 export NODES_FILE=/dev/null
+export DYNAMIC_MODEL_DISCOVERY_ENABLED=false
+export DYNAMIC_MODEL_PROBE_ENABLED=false
 export NODE_DB_PATH
 
 # Build

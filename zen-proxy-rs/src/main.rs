@@ -49,8 +49,10 @@ use pool::{DeadPool, NodeRef, Pool, RateLimitedPool, ResultKind};
 use provider::webshare::WebShareProvider;
 use state::AppState;
 use v4::model::ModelRegistry;
-use v4::model_discovery::DynamicModelRegistry;
-use v4::model_probe_runner::run_dynamic_model_probe_once;
+use v4::model_discovery::{DiscoveredModelState, DynamicModelRegistry};
+use v4::model_probe_runner::{
+    run_dynamic_model_availability_check_once, run_dynamic_model_probe_once,
+};
 
 const DEFAULT_TOKIO_WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -260,9 +262,33 @@ async fn discover_dynamic_models_once(state: &AppState) {
                     planned = planned.len(),
                     max_per_round = probe_max_per_round,
                     adapter = %probe_adapter_mode,
-                    "dynamic model probe scheduler selected candidate batch"
+                    "dynamic model probe scheduler selected candidate and published-model batch"
                 );
-                for model in planned {
+                let mut probe_models = state
+                    .dynamic_models
+                    .probe_published_models(probe_max_per_round);
+                probe_models.extend(planned);
+                for model in probe_models {
+                    if matches!(
+                        model.state,
+                        DiscoveredModelState::Canary | DiscoveredModelState::Active
+                    ) {
+                        match run_dynamic_model_availability_check_once(state, &model.id).await {
+                            Ok(summary) => tracing::info!(
+                                model = %summary.model_id,
+                                final_state = ?summary.final_state,
+                                adapter = %probe_adapter_mode,
+                                "published model availability check completed"
+                            ),
+                            Err(err) => tracing::warn!(
+                                model = %model.id,
+                                error = ?err,
+                                adapter = %probe_adapter_mode,
+                                "published model availability check failed"
+                            ),
+                        }
+                        continue;
+                    }
                     match run_dynamic_model_probe_once(state, &model.id).await {
                         Ok(summary) => {
                             tracing::info!(
@@ -481,9 +507,7 @@ async fn async_main() {
         });
     }
 
-    // Background: side-channel opencode model discovery. This records only
-    // candidate metadata for admin visibility; it does not alter /v1/models or
-    // request model resolution.
+    // Background: discover, probe, and refresh dynamic model availability.
     if config.dynamic_model_discovery_enabled {
         let state = app_state.clone();
         state.dynamic_models.set_worker_running(true);

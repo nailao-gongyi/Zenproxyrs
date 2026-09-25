@@ -722,7 +722,10 @@ impl ModelProbeEngine {
         let probed = registry
             .record_probe_success(model_id, probe_name)
             .ok_or_else(|| ModelProbeError::ModelNotFound(model_id.to_string()))?;
-        if probed.consecutive_probe_successes >= self.config.success_quorum
+        if !matches!(
+            &probed.state,
+            DiscoveredModelState::Canary | DiscoveredModelState::Active
+        ) && probed.consecutive_probe_successes >= self.config.success_quorum
             && self.required_probes_passed(&probed)
         {
             return registry
@@ -769,7 +772,17 @@ impl ModelProbeEngine {
                 )
                 .ok_or_else(|| ModelProbeError::ModelNotFound(model_id.to_string()));
         }
-        Ok(probed)
+        if matches!(&probed.state, DiscoveredModelState::ProbePending) {
+            registry
+                .set_model_state(
+                    model_id,
+                    DiscoveredModelState::Candidate,
+                    format!("probe retry scheduled: code={}", failure.code),
+                )
+                .ok_or_else(|| ModelProbeError::ModelNotFound(model_id.to_string()))
+        } else {
+            Ok(probed)
+        }
     }
 
     fn ensure_probeable(
@@ -780,8 +793,11 @@ impl ModelProbeEngine {
         let model = registry
             .get(model_id)
             .ok_or_else(|| ModelProbeError::ModelNotFound(model_id.to_string()))?;
-        match model.state {
-            DiscoveredModelState::Candidate | DiscoveredModelState::ProbePending => Ok(()),
+        match &model.state {
+            DiscoveredModelState::Candidate
+            | DiscoveredModelState::ProbePending
+            | DiscoveredModelState::Canary
+            | DiscoveredModelState::Active => Ok(()),
             state => Err(ModelProbeError::ModelNotProbeable {
                 model_id: model_id.to_string(),
                 state,
@@ -816,6 +832,64 @@ impl ModelProbeEngine {
             .collect()
     }
 
+    pub fn run_availability_check<A: ModelProbeAdapter>(
+        &self,
+        registry: &DynamicModelRegistry,
+        model_id: &str,
+        adapter: &A,
+    ) -> Result<ModelProbeRunSummary, ModelProbeError> {
+        let model = registry
+            .get(model_id)
+            .ok_or_else(|| ModelProbeError::ModelNotFound(model_id.to_string()))?;
+        if !matches!(&model.state, DiscoveredModelState::Canary | DiscoveredModelState::Active) {
+            return Err(ModelProbeError::ModelNotProbeable {
+                model_id: model_id.to_string(),
+                state: model.state,
+            });
+        }
+        let original_state = model.state;
+        let probe_name = "openai_nonstream_minimal";
+        let started = self.start_probe(registry, model_id)?;
+        match adapter.run_probe(&started, probe_name) {
+            ModelProbeOutcome::Passed => {
+                let model = registry
+                    .record_probe_success(model_id, probe_name)
+                    .ok_or_else(|| ModelProbeError::ModelNotFound(model_id.to_string()))?;
+                let model = registry
+                    .set_model_state(
+                        model_id,
+                        original_state,
+                        "published model availability check passed",
+                    )
+                    .ok_or_else(|| ModelProbeError::ModelNotFound(model_id.to_string()))?;
+                if model.claudecode_compatible {
+                    let _ = registry.mark_claudecode_compatible(
+                        model_id,
+                        "published model passed an availability re-check",
+                    );
+                }
+                Ok(ModelProbeRunSummary {
+                    model_id: model.id,
+                    attempted_probe_names: vec![probe_name.to_string()],
+                    passed_probe_names: vec![probe_name.to_string()],
+                    failed_probe_name: None,
+                    final_state: model.state,
+                })
+            }
+            ModelProbeOutcome::Failed(failure) => {
+                let model =
+                    self.record_failure(registry, model_id, failure.for_probe(probe_name))?;
+                Ok(ModelProbeRunSummary {
+                    model_id: model.id,
+                    attempted_probe_names: vec![probe_name.to_string()],
+                    passed_probe_names: model.passed_probe_names,
+                    failed_probe_name: Some(probe_name.to_string()),
+                    final_state: model.state,
+                })
+            }
+        }
+    }
+
     pub fn run_required_probes<A: ModelProbeAdapter>(
         &self,
         registry: &DynamicModelRegistry,
@@ -832,7 +906,8 @@ impl ModelProbeEngine {
                     if matches!(
                         model.state,
                         DiscoveredModelState::Canary | DiscoveredModelState::Active
-                    ) {
+                    ) && model.public
+                    {
                         return Ok(ModelProbeRunSummary {
                             model_id: model.id,
                             attempted_probe_names,
@@ -972,7 +1047,7 @@ mod tests {
                 ModelProbeFailure::soft("provider_empty_output", "empty assistant output"),
             )
             .unwrap();
-        assert_eq!(first.state, DiscoveredModelState::ProbePending);
+        assert_eq!(first.state, DiscoveredModelState::Candidate);
         assert_eq!(first.consecutive_probe_failures, 1);
         assert!(!first.public);
 
@@ -988,6 +1063,84 @@ mod tests {
         assert_eq!(quarantined.probe_failure_total, 2);
         assert!(!quarantined.public);
         assert!(!quarantined.routable);
+    }
+
+    #[test]
+    fn hard_protocol_failure_removes_an_active_model_from_public_routing() {
+        let registry = registry_with_models();
+        registry.set_model_state(
+            "good-free",
+            DiscoveredModelState::Active,
+            "traffic quorum met",
+        );
+        let engine = ModelProbeEngine::new(ModelProbeConfig::default());
+        let adapter = MockProbeAdapter::failing(
+            "openai_nonstream_minimal",
+            ModelProbeFailure::hard_protocol(
+                "provider_invalid_tool_history",
+                "missing tool_call_id",
+            ),
+        );
+
+        let summary = engine
+            .run_availability_check(&registry, "good-free", &adapter)
+            .unwrap();
+        let quarantined = registry.get("good-free").unwrap();
+
+        assert_eq!(summary.final_state, DiscoveredModelState::Quarantined);
+        assert_eq!(quarantined.state, DiscoveredModelState::Quarantined);
+        assert!(!quarantined.public);
+        assert!(!quarantined.routable);
+        assert!(registry.probe_candidates(10).is_empty());
+    }
+
+    #[test]
+    fn availability_recheck_keeps_available_active_models_routable() {
+        let registry = registry_with_models();
+        registry.set_model_state(
+            "good-free",
+            DiscoveredModelState::Active,
+            "traffic quorum met",
+        );
+        let engine = ModelProbeEngine::new(ModelProbeConfig::default());
+        let adapter = MockProbeAdapter::default();
+
+        let summary = engine
+            .run_availability_check(&registry, "good-free", &adapter)
+            .unwrap();
+        let model = registry.get("good-free").unwrap();
+
+        assert_eq!(summary.final_state, DiscoveredModelState::Active);
+        assert!(model.public);
+        assert!(model.routable);
+        assert!(!model.probe_required);
+        assert_eq!(model.consecutive_probe_failures, 0);
+    }
+
+    #[test]
+    fn availability_recheck_quarantines_unavailable_active_models() {
+        let registry = registry_with_models();
+        registry.set_model_state(
+            "good-free",
+            DiscoveredModelState::Active,
+            "traffic quorum met",
+        );
+        let engine = ModelProbeEngine::new(ModelProbeConfig::default());
+        let adapter = MockProbeAdapter::failing(
+            "openai_nonstream_minimal",
+            ModelProbeFailure::soft("provider_unavailable", "connection refused"),
+        );
+
+        let summary = engine
+            .run_availability_check(&registry, "good-free", &adapter)
+            .unwrap();
+        let model = registry.get("good-free").unwrap();
+
+        assert_eq!(summary.final_state, DiscoveredModelState::Active);
+        assert!(model.public);
+        assert!(model.routable);
+        assert!(!model.probe_required);
+        assert_eq!(model.consecutive_probe_failures, 1);
     }
 
     #[test]

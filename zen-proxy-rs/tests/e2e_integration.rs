@@ -62,7 +62,9 @@ fn spawn_server(port: u16, envs: &[(&str, &str)]) -> Child {
         .env("PROXY_TOKEN_MODE", "unlimited")
         .env("ADMIN_API_KEY", "test-key")
         .env("NODES_FILE", "/dev/null")
-        .env("NODE_DB_PATH", node_db_path(port));
+        .env("NODE_DB_PATH", node_db_path(port))
+        .env("DYNAMIC_MODEL_DISCOVERY_ENABLED", "false")
+        .env("DYNAMIC_MODEL_PROBE_ENABLED", "false");
     for (key, value) in envs {
         command.env(key, value);
     }

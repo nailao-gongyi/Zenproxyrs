@@ -24,6 +24,21 @@ pub async fn run_dynamic_model_probe_once(
     state: &AppState,
     model_id: &str,
 ) -> Result<ModelProbeRunSummary, DynamicModelProbeRunError> {
+    run_dynamic_model_probe(state, model_id, false).await
+}
+
+pub async fn run_dynamic_model_availability_check_once(
+    state: &AppState,
+    model_id: &str,
+) -> Result<ModelProbeRunSummary, DynamicModelProbeRunError> {
+    run_dynamic_model_probe(state, model_id, true).await
+}
+
+async fn run_dynamic_model_probe(
+    state: &AppState,
+    model_id: &str,
+    availability_check: bool,
+) -> Result<ModelProbeRunSummary, DynamicModelProbeRunError> {
     let (
         adapter_mode,
         success_quorum,
@@ -39,8 +54,14 @@ pub async fn run_dynamic_model_probe_once(
             cfg.dynamic_model_probe_success_quorum,
             cfg.dynamic_model_probe_failure_quarantine_threshold,
             cfg.dynamic_model_probe_timeout_secs,
-            cfg.dynamic_model_probe_base_url.clone(),
-            cfg.dynamic_model_probe_api_key.clone(),
+            if cfg.dynamic_model_probe_base_url.trim().is_empty() {
+                cfg.upstream_base.clone()
+            } else {
+                cfg.dynamic_model_probe_base_url.clone()
+            },
+            cfg.dynamic_model_probe_api_key
+                .clone()
+                .or_else(|| Some(cfg.upstream_api_key.clone())),
             cfg.dynamic_model_probe_max_response_bytes,
         )
     };
@@ -76,7 +97,11 @@ pub async fn run_dynamic_model_probe_once(
                 let engine = ModelProbeEngine::new(probe_config);
                 let adapter =
                     BoundedHttpProbeAdapter::new(http_config, ReqwestBlockingProbeTransport);
-                let summary = engine.run_required_probes(&registry, &model_id, &adapter)?;
+                let summary = if availability_check {
+                    engine.run_availability_check(&registry, &model_id, &adapter)?
+                } else {
+                    engine.run_required_probes(&registry, &model_id, &adapter)?
+                };
                 if http_probe_earned_claudecode_profile(&summary) {
                     let _ = registry.mark_claudecode_compatible(
                         &model_id,

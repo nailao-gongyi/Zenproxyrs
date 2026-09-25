@@ -546,7 +546,7 @@ impl Config {
             .max(60),
             dynamic_model_public_mode: load_env_var(
                 "DYNAMIC_MODEL_PUBLIC_MODE",
-                DynamicModelPublicMode::CandidateCanaryOrActive,
+                DynamicModelPublicMode::CanaryOrActive,
             ),
             dynamic_model_public_allowlist: parse_csv_list_env("DYNAMIC_MODEL_PUBLIC_ALLOWLIST"),
             dynamic_model_claudecode_compat_allowlist: parse_csv_list_env(
@@ -561,10 +561,10 @@ impl Config {
                 _ => None,
             },
             live_probe_fail_threshold: load_env_var("LIVE_PROBE_FAIL_THRESHOLD", 2u32),
-            dynamic_model_probe_enabled: load_env_var("DYNAMIC_MODEL_PROBE_ENABLED", false),
+            dynamic_model_probe_enabled: load_env_var("DYNAMIC_MODEL_PROBE_ENABLED", true),
             dynamic_model_probe_adapter_mode: load_env_var(
                 "DYNAMIC_MODEL_PROBE_ADAPTER",
-                DynamicModelProbeAdapterMode::Disabled,
+                DynamicModelProbeAdapterMode::HttpBounded,
             ),
             dynamic_model_probe_max_concurrent: load_env_var(
                 "DYNAMIC_MODEL_PROBE_MAX_CONCURRENT",
@@ -1076,14 +1076,14 @@ mod tests {
         assert_eq!(cfg.dynamic_model_discovery_interval_secs, 1800);
         assert_eq!(
             cfg.dynamic_model_public_mode,
-            DynamicModelPublicMode::CandidateCanaryOrActive
+            DynamicModelPublicMode::CanaryOrActive
         );
         assert!(cfg.dynamic_model_public_allowlist.is_empty());
         assert!(!cfg.dynamic_model_allow_direct_fallback);
-        assert!(!cfg.dynamic_model_probe_enabled);
+        assert!(cfg.dynamic_model_probe_enabled);
         assert_eq!(
             cfg.dynamic_model_probe_adapter_mode,
-            DynamicModelProbeAdapterMode::Disabled
+            DynamicModelProbeAdapterMode::HttpBounded
         );
         assert_eq!(cfg.dynamic_model_probe_max_concurrent, 1);
         assert_eq!(cfg.dynamic_model_probe_max_per_round, 3);

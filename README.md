@@ -11,11 +11,11 @@
 - OpenAI 兼容 `/v1/*` 代理转发
 - 可选 `free_model_kernel` 模式（内嵌 `free-model-client-rs` 内核）
 - SOCKS5/HTTP 代理节点池与故障隔离
-- 动态模型发现与探针（可选）
+- 动态模型自动发现与 HTTP 可用性探测；失效模型自动隔离并从列表撤下
 - Prometheus `/metrics`、管理后台 `/admin/*`
 - Redis 全局预算与会话亲和（可选）
 - **流式截断防护**（v0.3.0）：DSML 标记 withhold/repair、短句假 `end_turn` 的 unfinished tool-intent 检测与重试
-- **默认暴露全部上游 free 模型**：`free_model_kernel` + 动态发现 + `candidate_canary_or_active`（上游 `*-free` 模型自动进入 `/v1/models`）
+- **自动维护上游 free 模型列表**：默认每 30 分钟发现并通过真实 HTTP 探测验证模型；通过检测后进入 `/v1/models`，不可用模型隔离后自动撤下
 
 ## 快速开始
 
@@ -214,7 +214,7 @@ Docker 回滚：`docker compose down` 后切回上一镜像 tag 或 `docker comp
 | `ADMIN_API_KEY` | _(空)_ | 管理接口鉴权 Key |
 | `ZEN_PROVIDER_MODE` | `free_model_kernel` | `legacy` 或 `free_model_kernel`（默认已启用 V4 内核） |
 | `DYNAMIC_MODEL_DISCOVERY_ENABLED` | `true` | 定期拉取上游 `/v1/models` |
-| `DYNAMIC_MODEL_PUBLIC_MODE` | `candidate_canary_or_active` | 动态 free 模型公开策略；`static_only` 仅 4 个静态模型 |
+| `DYNAMIC_MODEL_PUBLIC_MODE` | `canary_or_active` | 动态 free 模型公开策略；动态模型通过真实探针后才公开 |
 | `NODES_FILE` | `/etc/zen-proxy/nodes.json` | 代理节点列表文件 |
 | `PREFERRED_PROXY_URLS` | _(空)_ | 优先代理 URL，逗号分隔 |
 | `GLOBAL_BUDGET_REDIS_URL` | _(空)_ | Redis 地址（全局预算） |
@@ -223,7 +223,7 @@ Docker 回滚：`docker compose down` 后切回上一镜像 tag 或 `docker comp
 
 ### 模型列表行为
 
-OpenCode 上游（2026-08-21）当前 **9 个 free 模型**；Zenproxy 默认应暴露 **9 个 public alias**：
+OpenCode 上游 free 模型数量会变化；Zenproxy 自动同步符合筛选条件且通过健康探测的模型：
 
 | Public ID | 上游 ID | 来源 |
 |-----------|---------|------|
@@ -241,13 +241,14 @@ OpenCode 上游（2026-08-21）当前 **9 个 free 模型**；Zenproxy 默认应
 
 1. 始终列出 4 个静态模型
 2. 启动时立即 + 每 30 分钟拉取上游 `/v1/models`（`DYNAMIC_MODEL_DISCOVERY_INTERVAL_SECS`，默认 1800）
-3. 将通过分类的 candidate/canary/active 动态模型追加到 `GET /v1/models`
+3. 使用真实 HTTP 请求探测候选模型，通过完整探针后才追加到 `GET /v1/models`
+4. 每轮刷新最多复检 3 个已公开模型；失败达到隔离阈值后自动从列表及路由中移除
 
-若只看到 4 个，通常是 `.env` 仍设置了 `DYNAMIC_MODEL_DISCOVERY_ENABLED=false` 或 `DYNAMIC_MODEL_PUBLIC_MODE=static_only`（会覆盖代码默认值）。用 `ops/local-dev/audit_opencode_free_models.py` 可核对上游列表。
+探测默认使用 `UPSTREAM_BASE` 与 `UPSTREAM_API_KEY`；可用 `DYNAMIC_MODEL_PROBE_BASE_URL`、`DYNAMIC_MODEL_PROBE_API_KEY` 单独覆盖。若只看到 4 个，检查 `.env` 中的发现开关、公开模式和上游 API 凭据。
 
-若只想保留静态 4 模型，设置 `DYNAMIC_MODEL_PUBLIC_MODE=static_only` 或 `DYNAMIC_MODEL_DISCOVERY_ENABLED=false`。
+若只想保留静态 4 模型，设置 `DYNAMIC_MODEL_PUBLIC_MODE=static_only` 或 `DYNAMIC_MODEL_DISCOVERY_ENABLED=false`。如需关闭自动可用性检测，可设置 `DYNAMIC_MODEL_PROBE_ENABLED=false`。
 
-生产环境若需 probe 晋升门槛，可改为 `canary_or_active` 或 `active_only`（见 admin `/admin/models`）。
+`candidate_canary_or_active` 会将未探测候选直接加入列表，不适用于要求自动剔除不可用模型的场景。
 
 ## 代理节点配置
 
