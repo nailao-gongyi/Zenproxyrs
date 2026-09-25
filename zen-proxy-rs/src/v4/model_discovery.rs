@@ -606,7 +606,7 @@ impl DynamicModelRegistry {
             model.last_probe_name = probe_name;
             model.last_failure_unix = Some(now);
             model.last_seen_unix = now;
-            model.last_failure_code = Some(code);
+            model.last_failure_code = Some(code.clone());
             model.last_failure_message = Some(message);
             model.probe_failure_total = model.probe_failure_total.saturating_add(1);
             model.consecutive_probe_failures = model.consecutive_probe_failures.saturating_add(1);

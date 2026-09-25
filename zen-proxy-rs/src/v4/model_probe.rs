@@ -800,7 +800,7 @@ impl ModelProbeEngine {
             | DiscoveredModelState::Active => Ok(()),
             state => Err(ModelProbeError::ModelNotProbeable {
                 model_id: model_id.to_string(),
-                state,
+                state: state.clone(),
             }),
         }
     }
